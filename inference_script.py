@@ -199,9 +199,9 @@ def save_uncertainty_map(mask_std, save_path, original_image=None, result_state=
 def original_inference(processor, image, text_prompt='bags'):
     """Run original SAM3 inference without MC-dropout for baseline comparison."""
     processor.model.eval()  # Ensure model is in eval mode
-
-    state = processor.set_image(image)
-    state = processor.set_text_prompt(prompt=text_prompt, state=state)
+    with torch.no_grad():
+        state = processor.set_image(image)
+        state = processor.set_text_prompt(prompt=text_prompt, state=state)
 
     masks = state.get("masks")
     scores = state.get("scores")
@@ -229,11 +229,12 @@ def mc_dropout_inference(processor, image, num_runs=3, text_prompt='bags'):
     states = []
 
     for run_id in range(num_runs):
-        processor.model.train()
+        processor.model.eval()
         dropout_count = enable_mc_dropout(processor.model)
 
-        state = processor.set_image(image)
-        state = processor.set_text_prompt(prompt=text_prompt, state=state)
+        with torch.no_grad(): 
+            state = processor.set_image(image)
+            state = processor.set_text_prompt(prompt=text_prompt, state=state)
 
         mask_logits = state.get("masks_logits")
         scores = state.get("scores")
@@ -299,7 +300,7 @@ def main():
         print(f"✓ Skipping login (model assumed cached)")
 
     # Build model
-    model = build_sam3_image_model(bpe_path=bpe_path, device="cpu")
+    model = build_sam3_image_model(bpe_path=bpe_path, device="cuda")
 
     # Convert model to float32 for CPU compatibility
     model = model.to(dtype=torch.float32)
@@ -320,7 +321,7 @@ def main():
         print(f"\nProcessing image {idx+1}/{len(image_paths)}: {os.path.basename(image_path)}")
         image = Image.open(image_path)
 
-        processor = Sam3Processor(model, confidence_threshold=0.1, device="cpu")
+        processor = Sam3Processor(model, confidence_threshold=0.1, device="cuda")
 
         # MC-dropout inference (5 runs) for uncertainty estimation using text prompt detection
         # Use appropriate prompt based on image content
@@ -331,7 +332,7 @@ def main():
         else:
             text_prompt = 'objects'  # fallback
         
-        stats, result_state, _ = mc_dropout_inference(processor, image, num_runs=3, text_prompt=text_prompt)
+        stats, result_state, _ = mc_dropout_inference(processor, image, num_runs=20, text_prompt=text_prompt)
 
         if stats is None or result_state is None:
             print(f"  ✗ No valid prediction for {image_path}")
